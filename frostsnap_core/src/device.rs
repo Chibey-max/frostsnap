@@ -622,6 +622,54 @@ pub trait DeviceSecretDerivation {
     ) -> [u8; 32];
 }
 
+/// A PRF under a secret only the device holds: unpredictable without it, and the same for the
+/// device's whole life, since every share-encryption key and nonce seed is derived from it.
+pub trait DevicePrf {
+    /// The PRF over the concatenation of `message`.
+    fn prf(&mut self, message: &[&[u8]]) -> [u8; 32];
+
+    /// The domain-separated PRF every device secret is derived with. Its framing is frozen: it
+    /// decides every existing device's keys.
+    fn prf_domain(&mut self, domain: &str, input: &[u8]) -> [u8; 32] {
+        self.prf(&[&[domain.len() as u8], domain.as_bytes(), input])
+    }
+}
+
+/// The byte layouts here decide every existing device's share-encryption keys and nonces.
+impl<T: DevicePrf + ?Sized> DeviceSecretDerivation for T {
+    fn get_share_encryption_key(
+        &mut self,
+        access_structure_ref: AccessStructureRef,
+        party_index: ShareIndex,
+        coord_key: CoordShareDecryptionContrib,
+    ) -> SymmetricKey {
+        let mut src = [0u8; 128];
+        src[..32].copy_from_slice(access_structure_ref.key_id.to_bytes().as_slice());
+        src[32..64].copy_from_slice(
+            access_structure_ref
+                .access_structure_id
+                .to_bytes()
+                .as_slice(),
+        );
+        src[64..96].copy_from_slice(party_index.to_bytes().as_slice());
+        src[96..128].copy_from_slice(coord_key.to_bytes().as_slice());
+        SymmetricKey(self.prf_domain("share-encryption", &src))
+    }
+
+    fn derive_nonce_seed(
+        &mut self,
+        nonce_stream_id: crate::nonce_stream::NonceStreamId,
+        index: u32,
+        seed_material: &[u8; 32],
+    ) -> [u8; 32] {
+        let mut input = [0u8; 52];
+        input[..16].copy_from_slice(nonce_stream_id.to_bytes().as_slice());
+        input[16..20].copy_from_slice(&index.to_be_bytes());
+        input[20..52].copy_from_slice(seed_material);
+        self.prf_domain("nonce-seed", &input)
+    }
+}
+
 #[derive(Clone, Debug, bincode::Encode, bincode::Decode, PartialEq)]
 pub struct CompleteSecretShare {
     pub access_structure_ref: AccessStructureRef,
