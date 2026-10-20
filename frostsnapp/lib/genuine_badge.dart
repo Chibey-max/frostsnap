@@ -1,5 +1,6 @@
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:frostsnap/certificate_details.dart';
 import 'package:frostsnap/global.dart';
 import 'package:frostsnap/src/rust/api.dart';
 import 'package:frostsnap/src/rust/api/device_list.dart';
@@ -7,14 +8,20 @@ import 'package:frostsnap/theme.dart';
 
 /// Whether a genuine certificate key was compiled into this build. Read once: it is
 /// a compile-time constant on the Rust side, so calling across FFI on every badge
-/// build would be a round-trip per device per frame.
-final bool genuineCheckEnabled = coord.genuineCheckEnabled();
+/// build would be a round-trip per device per frame. Assignable only so widget tests, which have
+/// no coordinator, can choose it before its first read.
+bool genuineCheckEnabled = coord.genuineCheckEnabled();
+
+/// [device]'s genuine status, or `null` when this build cannot check: with no check attempted, any
+/// status — even a neutral one — would imply we looked.
+GenuineStatus? checkedGenuineStatus(ConnectedDevice device) =>
+    genuineCheckEnabled ? device.genuine : null;
 
 enum GenuineLook { genuine, updateToVerify, unverified }
 
-/// Note what this file does *not* import: `device_colors.dart`. Tinting a "Genuine" pill with the
-/// case colour gave a red device a red badge (red being the universal error colour) and made a
-/// black device's badge invisible against the dark theme.
+/// The badge's colours come only from the status, never the case colour: tinting a "Genuine" pill
+/// with it gave a red device a red badge (red being the universal error colour) and made a black
+/// device's badge invisible against the dark theme.
 extension GenuineStatusExt on GenuineStatus {
   GenuineLook get look => switch (this) {
     GenuineStatus_Genuine() => GenuineLook.genuine,
@@ -97,11 +104,21 @@ void showGenuineExplanation(BuildContext context, GenuineStatus status) {
             size: 28,
           ),
           title: Text(title),
-          content: Text(
-            body,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                body,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              if (status case GenuineStatus_Genuine(:final certificate)) ...[
+                const SizedBox(height: 16),
+                CertificateDetails(certificate: certificate),
+              ],
+            ],
           ),
           actions: [
             TextButton(
